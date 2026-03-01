@@ -1,10 +1,16 @@
 /**
  * WinScene — shown when the player clears all 3 levels.
  *
+ * Phase 4 additions:
+ *   • P3 — Shows high score ("Best: XXXX") from localStorage
+ *   • P6 — Unlocks Level 2 in the menu (via unlockLevel helper)
+ *
  * Receives { totalScore } via scene data.
  * "Play Again" → resets GameState and returns to MenuScene.
  */
-import { GameState } from '../GameState.js';
+import { GameState }    from '../GameState.js';
+import { HighScore }    from '../utils/HighScore.js';
+import { unlockLevel }  from '../utils/LevelUnlock.js';
 
 export class WinScene extends Phaser.Scene {
   constructor() {
@@ -14,19 +20,19 @@ export class WinScene extends Phaser.Scene {
 
   init(data) {
     this._totalScore = data?.totalScore ?? GameState.totalScore;
+
+    // P6: Unlock Level 2 (and 3) since the player completed everything
+    unlockLevel(2);
+    unlockLevel(3);
+
+    // P3: Persist high score
+    HighScore.set(this._totalScore);
   }
 
   preload() {
-    // Assets should already be cached from GameScene, but load defensively
-    if (!this.textures.exists('bee')) {
-      this.load.image('bee',  'assets/thumb_Bee.png');
-    }
-    if (!this.textures.exists('bg')) {
-      this.load.image('bg',   'assets/thumb_Background.png');
-    }
-    if (!this.textures.exists('cloud')) {
-      this.load.image('cloud','assets/thumb_Cloud.png');
-    }
+    if (!this.textures.exists('bee'))   this.load.image('bee',   'assets/thumb_Bee.png');
+    if (!this.textures.exists('bg'))    this.load.image('bg',    'assets/thumb_Background.png');
+    if (!this.textures.exists('cloud')) this.load.image('cloud', 'assets/thumb_Cloud.png');
   }
 
   create() {
@@ -44,19 +50,17 @@ export class WinScene extends Phaser.Scene {
 
     // ── Dark panel ──────────────────────────────────────────────────────────
     this.add
-      .rectangle(width / 2, height / 2, width * 0.82, height * 0.78, 0x000000, 0.65)
+      .rectangle(width / 2, height / 2, width * 0.82, height * 0.82, 0x000000, 0.65)
       .setDepth(1);
 
     // ── Trophy & title ──────────────────────────────────────────────────────
     this.add
-      .text(width / 2, height * 0.16, '🏆', {
-        fontSize: '52px',
-      })
+      .text(width / 2, height * 0.13, '🏆', { fontSize: '52px' })
       .setOrigin(0.5)
       .setDepth(2);
 
     this.add
-      .text(width / 2, height * 0.34, 'You Win!', {
+      .text(width / 2, height * 0.30, 'You Win!', {
         fontFamily: 'Arial Black, Impact, sans-serif',
         fontSize:   '36px',
         color:      '#FFD700',
@@ -66,9 +70,9 @@ export class WinScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(2);
 
-    // ── Score ────────────────────────────────────────────────────────────────
+    // ── Total Score ──────────────────────────────────────────────────────────
     this.add
-      .text(width / 2, height * 0.50, `Total Score: ${this._totalScore}`, {
+      .text(width / 2, height * 0.45, `Score: ${this._totalScore}`, {
         fontFamily: 'Arial, sans-serif',
         fontSize:   '20px',
         color:      '#ffffff',
@@ -78,18 +82,29 @@ export class WinScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(2);
 
+    // ── P3: High Score ────────────────────────────────────────────────────────
+    const best = HighScore.get();
+    this.add
+      .text(width / 2, height * 0.54, `Best: ${best}`, {
+        fontFamily: 'Arial, sans-serif',
+        fontSize:   '16px',
+        color:      '#FFD700',
+        stroke:     '#000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(2);
+
     // ── Star rating ──────────────────────────────────────────────────────────
     const stars = this._starRating(this._totalScore);
     this.add
-      .text(width / 2, height * 0.61, stars, {
-        fontSize: '28px',
-      })
+      .text(width / 2, height * 0.63, stars, { fontSize: '28px' })
       .setOrigin(0.5)
       .setDepth(2);
 
     // ── Play Again button ─────────────────────────────────────────────────────
     const playAgainBtn = this.add
-      .text(width / 2, height * 0.75, '[ PLAY AGAIN ]', {
+      .text(width / 2, height * 0.76, '[ PLAY AGAIN ]', {
         fontFamily: 'Arial Black, sans-serif',
         fontSize:   '20px',
         color:      '#00FF88',
@@ -102,13 +117,9 @@ export class WinScene extends Phaser.Scene {
 
     playAgainBtn.on('pointerover',  () => playAgainBtn.setColor('#FFD700'));
     playAgainBtn.on('pointerout',   () => playAgainBtn.setColor('#00FF88'));
-    playAgainBtn.on('pointerdown',  () => {
-      GameState.reset();
-      this.cameras.main.fadeOut(300, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('MenuScene');
-      });
-    });
+    playAgainBtn.on('pointerdown',  () => this._returnToMenu());
+
+    this.input.on('pointerdown', () => this._returnToMenu());
 
     // ── Decorative bees ──────────────────────────────────────────────────────
     [width * 0.15, width * 0.85].forEach((beeX, i) => {
@@ -127,15 +138,6 @@ export class WinScene extends Phaser.Scene {
       });
     });
 
-    // ── Tap anywhere to continue ──────────────────────────────────────────────
-    this.input.on('pointerdown', () => {
-      GameState.reset();
-      this.cameras.main.fadeOut(300, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('MenuScene');
-      });
-    });
-
     this.cameras.main.fadeIn(500, 0, 0, 0);
   }
 
@@ -144,7 +146,13 @@ export class WinScene extends Phaser.Scene {
     if (this._cloud) this._cloud.tilePositionX += 0.3;
   }
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
+  _returnToMenu() {
+    GameState.reset();
+    this.cameras.main.fadeOut(300, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('MenuScene');
+    });
+  }
 
   _starRating(score) {
     if (score >= 500) return '⭐⭐⭐';
