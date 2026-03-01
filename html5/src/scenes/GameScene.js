@@ -1,64 +1,74 @@
 /**
- * GameScene — the main gameplay scene.
+ * GameScene — Phase 2 (Coins, Bubbles, Level Data & Polish)
  *
  * Ported from GameMechanics.lua (Corona SDK → Phaser 3).
  *
  * State machine:
- *   READY        — waiting for tap/space; world is static
- *   PLAYING      — world scrolls left, bee controllable
- *   PAUSED       — hit a bubble obstacle; tap to resume (Phase 2+)
+ *   READY          — waiting for tap/space; world is static
+ *   PLAYING        — world scrolls left, bee controllable
+ *   PAUSED         — hit a bubble; tap/space to resume
  *   LEVEL_COMPLETE — reached the finish line
- *   GAME_OVER    — bee hit a wall with no lives remaining
+ *   GAME_OVER      — bee hit a wall
  *
  * Controls:
  *   Desktop : UP / DOWN arrow keys (continuous, clamped to screen)
  *   Mobile  : DeviceOrientationEvent beta (forward tilt → move up)
  *
- * Scrolling world:
- *   All obstacles live in a container that moves left each frame.
- *   Bee stays at a fixed x position (x=120), matching original logic.
+ * Level data is loaded from src/data/level1.json (imported as JS module).
+ * All sprites come from html5/public/assets/.
+ *
+ * Phase 2 additions:
+ *   • JSON-driven obstacles (walls, coins, bubbles)
+ *   • Coins: monster.png sprite, bob tween, +10 floating popup, score sum
+ *   • Bubbles: pause mechanic matching original (state=PAUSED, tap to resume)
+ *   • Bee: wing-flap scaleY tween + gentle tilt wobble
+ *   • Score HUD: digit-sprite images (0.png–9.png) rendered top-right
  */
 
-const SCROLL_SPEED = 2;          // px per frame (original: speed = 2)
-const BEE_X = 120;               // fixed horizontal position
-const VERTICAL_MOVE_SPEED = 4;   // px per frame for keyboard control
-const WORLD_LENGTH = 3000;       // total scrollable distance before finish
+import level1Data from '../data/level1.json';
+
+const SCROLL_SPEED   = 2;   // px per frame (original: speed = 2)
+const BEE_X          = 120; // fixed horizontal position
+const VERT_SPEED     = 4;   // px per frame keyboard control
+const DIGIT_SPACING  = 18;  // px between score digit sprites
 
 // State enum
 const STATE = {
-  READY: 'READY',
-  PLAYING: 'PLAYING',
-  PAUSED: 'PAUSED',
+  READY:          'READY',
+  PLAYING:        'PLAYING',
+  PAUSED:         'PAUSED',
   LEVEL_COMPLETE: 'LEVEL_COMPLETE',
-  GAME_OVER: 'GAME_OVER',
+  GAME_OVER:      'GAME_OVER',
 };
-
-// Hardcoded wall obstacle configs  [worldX, topGapEnd, bottomGapStart]
-// topGapEnd / bottomGapStart define the opening the bee must fly through.
-const WALL_CONFIGS = [
-  { x: 700,  gapTop: 80,  gapBottom: 200 },
-  { x: 1100, gapTop: 120, gapBottom: 240 },
-  { x: 1600, gapTop: 60,  gapBottom: 180 },
-  { x: 2200, gapTop: 100, gapBottom: 220 },
-];
 
 export class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
     this._state = STATE.READY;
-    this._tiltStartBeta = null;   // calibration reference for device tilt
-    this._orientationHandler = null;
+    this._tiltStartBeta       = null;
+    this._orientationHandler  = null;
+    this._digitImages         = [];   // HUD digit sprites
+    this._coinTweens          = [];   // track bob tweens for cleanup
+    this._bubbleTweens        = [];
   }
 
   // ─── Asset Loading ────────────────────────────────────────────────────────
 
   preload() {
-    this.load.image('bg', 'assets/thumb_Background.png');
-    this.load.image('bg01', 'assets/thumb_Background01.png');
-    this.load.image('cloud', 'assets/thumb_Cloud.png');
-    this.load.image('bee', 'assets/thumb_Bee.png');
-    this.load.image('wall', 'assets/wall.png');
+    // Backgrounds
+    this.load.image('bg',     'assets/thumb_Background.png');
+    this.load.image('cloud',  'assets/thumb_Cloud.png');
+
+    // Sprites
+    this.load.image('bee',    'assets/thumb_Bee.png');
+    this.load.image('wall',   'assets/wall.png');
+    this.load.image('coin',   'assets/monster.png');   // monster.png = coin in original
     this.load.image('bubble', 'assets/thumb_Bubble.png');
+
+    // Digit sprites for score display
+    for (let d = 0; d <= 9; d++) {
+      this.load.image(`digit_${d}`, `assets/${d}.png`);
+    }
   }
 
   // ─── Scene Creation ────────────────────────────────────────────────────────
@@ -66,160 +76,289 @@ export class GameScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
 
-    this._state = STATE.READY;
-    this._score = 0;
+    this._state         = STATE.READY;
+    this._score         = 0;
+    this._worldOffset   = 0;
     this._tiltStartBeta = null;
+    this._coinTweens    = [];
+    this._bubbleTweens  = [];
 
     // ── Background (tiled, scrolls left) ──
     this._bgTile = this.add
       .tileSprite(0, 0, width, height, 'bg')
       .setOrigin(0, 0);
 
-    // Optional: secondary cloud layer for parallax depth
+    // Cloud layer, slight parallax
     this._cloudTile = this.add
       .tileSprite(0, 0, width, height * 0.4, 'cloud')
       .setOrigin(0, 0)
-      .setAlpha(0.5);
+      .setAlpha(0.45);
 
     // ── World container — everything that scrolls ──
     this._world = this.add.container(0, 0);
 
-    // ── Wall obstacles ──
-    this._walls = this.physics.add.staticGroup();
-    this._buildWalls(width, height);
+    // ── Physics groups ──
+    this._walls   = this.physics.add.staticGroup();
+    this._coins   = this.physics.add.staticGroup();
+    this._bubbles = this.physics.add.staticGroup();
+
+    // ── Build level from JSON ──
+    this._buildLevel();
 
     // ── Bee ──
     this._bee = this.physics.add.image(BEE_X, height / 2, 'bee');
     this._bee.setCollideWorldBounds(true);
     this._bee.setDepth(10);
-    // Keep bee physics body tight
     this._bee.body.setSize(
-      this._bee.width * 0.7,
-      this._bee.height * 0.7,
+      this._bee.width  * 0.65,
+      this._bee.height * 0.65,
     );
 
-    // ── Collision: bee ↔ walls ──
-    this.physics.add.overlap(
-      this._bee,
-      this._walls,
-      this._onBeeHitWall,
-      null,
-      this,
-    );
+    // Wing-flap tween (scaleX oscillates to simulate wing beat)
+    this._wingTween = this.tweens.add({
+      targets:  this._bee,
+      scaleX:   { from: 1.0, to: 0.75 },
+      duration: 120,
+      yoyo:     true,
+      repeat:   -1,
+      ease:     'Sine.easeInOut',
+    });
 
-    // ── Score text ──
-    this._scoreTxt = this.add
-      .text(width - 8, 8, 'Score: 0', {
-        fontFamily: 'Arial Black, sans-serif',
-        fontSize: '14px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 3,
-      })
-      .setOrigin(1, 0)
-      .setDepth(20);
+    // ── Collisions ──
+    this.physics.add.overlap(this._bee, this._walls,   this._onBeeHitWall,   null, this);
+    this.physics.add.overlap(this._bee, this._coins,   this._onBeeHitCoin,   null, this);
+    this.physics.add.overlap(this._bee, this._bubbles, this._onBeeHitBubble, null, this);
 
-    // ── HUD: Ready prompt ──
+    // ── Score HUD — digit sprites (top-right) ──
+    this._buildScoreHUD(width);
+
+    // ── Ready text ──
     this._readyTxt = this.add
       .text(width / 2, height / 2 - 40, 'Tap  /  Press Space to start', {
         fontFamily: 'Arial, sans-serif',
-        fontSize: '16px',
-        color: '#FFD700',
-        stroke: '#000',
+        fontSize:   '16px',
+        color:      '#FFD700',
+        stroke:     '#000',
         strokeThickness: 3,
-        align: 'center',
+        align:      'center',
       })
       .setOrigin(0.5)
       .setDepth(20);
 
-    // Pulsing animation on ready text
     this.tweens.add({
-      targets: this._readyTxt,
-      alpha: 0.2,
+      targets:  this._readyTxt,
+      alpha:    0.2,
       duration: 700,
-      yoyo: true,
-      repeat: -1,
+      yoyo:     true,
+      repeat:   -1,
     });
 
-    // ── HUD: Game Over / Level Complete overlays ──
-    this._gameOverTxt = this.add
-      .text(width / 2, height / 2, 'You hit a wall!\nTap to retry', {
+    // ── Paused label ──
+    this._pausedLabel = this.add
+      .text(width / 2, height / 2, '🐝 Bee is resting.\nTap or press Space to continue', {
         fontFamily: 'Arial Black, sans-serif',
-        fontSize: '22px',
-        color: '#FF4444',
-        stroke: '#000',
+        fontSize:   '18px',
+        color:      '#FFD700',
+        stroke:     '#222',
         strokeThickness: 4,
-        align: 'center',
+        align:      'center',
       })
       .setOrigin(0.5)
       .setDepth(30)
       .setVisible(false);
 
+    // ── Game Over overlay ──
+    this._gameOverTxt = this.add
+      .text(width / 2, height / 2, 'You hit a wall!\nTap to retry', {
+        fontFamily: 'Arial Black, sans-serif',
+        fontSize:   '22px',
+        color:      '#FF4444',
+        stroke:     '#000',
+        strokeThickness: 4,
+        align:      'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(30)
+      .setVisible(false);
+
+    // ── Level Complete overlay ──
     this._levelCompleteTxt = this.add
       .text(width / 2, height / 2, '🎉 Level Complete!\nTap to return to menu', {
         fontFamily: 'Arial Black, sans-serif',
-        fontSize: '22px',
-        color: '#00FF88',
-        stroke: '#000',
+        fontSize:   '22px',
+        color:      '#00FF88',
+        stroke:     '#000',
         strokeThickness: 4,
-        align: 'center',
+        align:      'center',
       })
       .setOrigin(0.5)
       .setDepth(30)
       .setVisible(false);
 
     // ── Input ──
-    this._cursors = this.input.keyboard.createCursorKeys();
-    this._spaceKey = this.input.keyboard.addKey(
-      Phaser.Input.Keyboard.KeyCodes.SPACE,
-    );
+    this._cursors  = this.input.keyboard.createCursorKeys();
+    this._spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-    // Pointer (tap/click)
     this.input.on('pointerdown', this._onTap, this);
 
-    // Device orientation for mobile tilt control
     this._setupTiltControl();
 
     // ── Fade in ──
     this.cameras.main.fadeIn(400, 0, 0, 0);
 
-    // ── Finish line marker (invisible trigger) ──
-    this._finishX = WORLD_LENGTH;
+    this._finishX = level1Data.length;
   }
 
-  // ─── Wall Construction ─────────────────────────────────────────────────────
+  // ─── Level Builder ─────────────────────────────────────────────────────────
 
-  /**
-   * Each wall config produces two static wall segments (top + bottom)
-   * leaving a gap for the bee to pass through.
-   */
-  _buildWalls(sceneWidth, sceneHeight) {
-    WALL_CONFIGS.forEach((cfg) => {
-      // Top segment: from y=0 to gapTop
-      const topH = cfg.gapTop;
-      if (topH > 0) {
-        const topWall = this.add.image(cfg.x, topH / 2, 'wall');
-        topWall.setDisplaySize(32, topH);
-        topWall.setDepth(5);
-        this.physics.add.existing(topWall, true); // true = static
-        this._walls.add(topWall);
-        this._world.add(topWall);
-      }
+  _buildLevel() {
+    level1Data.obstacles.forEach((obs) => {
+      if (obs.type === 'wall')   this._spawnWall(obs);
+      if (obs.type === 'coin')   this._spawnCoin(obs);
+      if (obs.type === 'bubble') this._spawnBubble(obs);
+    });
+  }
 
-      // Bottom segment: from gapBottom to scene bottom
-      const bottomH = sceneHeight - cfg.gapBottom;
-      if (bottomH > 0) {
-        const botWall = this.add.image(
-          cfg.x,
-          cfg.gapBottom + bottomH / 2,
-          'wall',
-        );
-        botWall.setDisplaySize(32, bottomH);
-        botWall.setDepth(5);
-        this.physics.add.existing(botWall, true);
-        this._walls.add(botWall);
-        this._world.add(botWall);
+  _spawnWall(obs) {
+    const w   = this.add.image(obs.x, obs.y, 'wall');
+    w.setDisplaySize(obs.width, obs.height);
+    w.setDepth(5);
+    this.physics.add.existing(w, true);
+    this._walls.add(w);
+    this._world.add(w);
+  }
+
+  _spawnCoin(obs) {
+    // Use monster.png (the coin sprite from the original)
+    const coin = this.physics.add.staticImage(obs.x, obs.y, 'coin');
+    coin.setDisplaySize(28, 32);
+    coin.setDepth(6);
+    coin.refreshBody();
+    coin._points = obs.points || 10;
+
+    // Gentle bob tween
+    const t = this.tweens.add({
+      targets:  coin,
+      y:        obs.y + 6,
+      duration: 800 + Math.random() * 300,
+      yoyo:     true,
+      repeat:   -1,
+      ease:     'Sine.easeInOut',
+    });
+    this._coinTweens.push(t);
+
+    // Scale pulse
+    this.tweens.add({
+      targets:  coin,
+      scaleX:   1.15,
+      scaleY:   1.15,
+      duration: 600,
+      yoyo:     true,
+      repeat:   -1,
+      ease:     'Sine.easeInOut',
+    });
+
+    this._coins.add(coin);
+    this._world.add(coin);
+  }
+
+  _spawnBubble(obs) {
+    const bubble = this.physics.add.staticImage(obs.x, obs.y, 'bubble');
+    bubble.setDisplaySize(50, 50);
+    bubble.setDepth(6);
+    bubble.refreshBody();
+
+    // Slow float animation
+    const t = this.tweens.add({
+      targets:  bubble,
+      y:        obs.y - 8,
+      duration: 1400,
+      yoyo:     true,
+      repeat:   -1,
+      ease:     'Sine.easeInOut',
+    });
+    this._bubbleTweens.push(t);
+
+    this.tweens.add({
+      targets:  bubble,
+      alpha:    0.75,
+      duration: 1000,
+      yoyo:     true,
+      repeat:   -1,
+      ease:     'Sine.easeInOut',
+    });
+
+    this._bubbles.add(bubble);
+    this._world.add(bubble);
+  }
+
+  // ─── Score HUD — Digit Sprites ─────────────────────────────────────────────
+
+  _buildScoreHUD(width) {
+    // We'll maintain up to 6 digit images, right-aligned
+    this._digitImages = [];
+    const maxDigits = 6;
+    for (let i = 0; i < maxDigits; i++) {
+      const img = this.add.image(0, 12, 'digit_0')
+        .setOrigin(0, 0)
+        .setDepth(25)
+        .setVisible(false)
+        .setScale(0.9);
+      this._digitImages.push(img);
+    }
+    this._updateScoreHUD(width);
+  }
+
+  _updateScoreHUD(width) {
+    const w     = width || this.scale.width;
+    const str   = String(this._score);
+    const total = this._digitImages.length;
+    const n     = str.length;
+
+    // Right-align: place last digit at rightmost
+    const rightEdge = w - 6;
+
+    for (let i = 0; i < total; i++) {
+      const img = this._digitImages[i];
+      const pos = total - 1 - i; // distance from right
+      const charIdx = n - 1 - pos;
+
+      if (charIdx < 0) {
+        img.setVisible(false);
+      } else {
+        const digit = parseInt(str[charIdx], 10);
+        img.setTexture(`digit_${digit}`);
+        img.setX(rightEdge - (pos + 1) * DIGIT_SPACING);
+        img.setVisible(true);
       }
+    }
+  }
+
+  // ─── Floating Text Popup ───────────────────────────────────────────────────
+
+  _spawnFloatingText(x, y, text) {
+    // worldX → screen X: add world container's current X
+    const screenX = x + this._world.x;
+    const screenY = y;
+
+    const txt = this.add
+      .text(screenX, screenY, text, {
+        fontFamily: 'Arial Black, sans-serif',
+        fontSize:   '14px',
+        color:      '#FFD700',
+        stroke:     '#000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setDepth(50);
+
+    this.tweens.add({
+      targets:  txt,
+      y:        screenY - 40,
+      alpha:    0,
+      duration: 900,
+      ease:     'Power2',
+      onComplete: () => txt.destroy(),
     });
   }
 
@@ -229,31 +368,20 @@ export class GameScene extends Phaser.Scene {
     if (typeof window !== 'undefined' && 'DeviceOrientationEvent' in window) {
       this._orientationHandler = (event) => {
         if (this._state !== STATE.PLAYING) return;
-
-        const beta = event.beta; // forward tilt −180…180
+        const beta = event.beta;
         if (beta === null) return;
-
-        // Calibrate on first tilt event in PLAYING state
-        if (this._tiltStartBeta === null) {
-          this._tiltStartBeta = beta;
-        }
-
-        // Original formula: bee.y = 160 - 16 * delta  (clamped ±10°)
+        if (this._tiltStartBeta === null) this._tiltStartBeta = beta;
         const { height } = this.scale;
-        let delta = beta - this._tiltStartBeta;
-        delta = Phaser.Math.Clamp(delta, -10, 10);
+        let delta = Phaser.Math.Clamp(beta - this._tiltStartBeta, -10, 10);
         const targetY = height / 2 - 16 * delta;
         this._bee.y = Phaser.Math.Clamp(targetY, 0, height);
       };
-
       window.addEventListener('deviceorientation', this._orientationHandler);
 
-      // iOS 13+ requires explicit permission
       if (
         typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function'
       ) {
-        // Will be prompted on first tap (see _onTap)
         this._needsOrientationPermission = true;
       }
     }
@@ -262,11 +390,7 @@ export class GameScene extends Phaser.Scene {
   _requestOrientationPermission() {
     if (this._needsOrientationPermission) {
       DeviceOrientationEvent.requestPermission()
-        .then((state) => {
-          if (state !== 'granted') {
-            console.warn('Device orientation permission denied.');
-          }
-        })
+        .then((s) => { if (s !== 'granted') console.warn('Orientation denied'); })
         .catch(console.error);
       this._needsOrientationPermission = false;
     }
@@ -277,12 +401,19 @@ export class GameScene extends Phaser.Scene {
   _onTap() {
     this._requestOrientationPermission();
 
-    if (this._state === STATE.READY) {
-      this._startGame();
-    } else if (this._state === STATE.GAME_OVER) {
-      this._restartGame();
-    } else if (this._state === STATE.LEVEL_COMPLETE) {
-      this._goToMenu();
+    switch (this._state) {
+      case STATE.READY:
+        this._startGame();
+        break;
+      case STATE.PAUSED:
+        this._resumeGame();
+        break;
+      case STATE.GAME_OVER:
+        this._restartGame();
+        break;
+      case STATE.LEVEL_COMPLETE:
+        this._goToMenu();
+        break;
     }
   }
 
@@ -291,30 +422,80 @@ export class GameScene extends Phaser.Scene {
     this._triggerGameOver();
   }
 
+  /**
+   * Coin collision — mirrors original:
+   *   moveGroup:remove(object)
+   *   score.setScore(score.getScore() + object.points)
+   */
+  _onBeeHitCoin(bee, coin) {
+    if (this._state !== STATE.PLAYING) return;
+
+    const pts = coin._points || 10;
+
+    // Stop bob tween so it doesn't try to animate a destroyed object
+    this._coinTweens = this._coinTweens.filter((t) => {
+      if (t.targets && t.targets.includes(coin)) {
+        t.stop();
+        return false;
+      }
+      return true;
+    });
+
+    // Floating "+10" text at world-relative position
+    this._spawnFloatingText(coin.x, coin.y, `+${pts}`);
+
+    // Remove from group and destroy
+    this._coins.remove(coin, true, true);
+
+    // Add to score
+    this._score += pts;
+  }
+
+  /**
+   * Bubble collision — mirrors original:
+   *   object.isBodyActive = false
+   *   speed = 0
+   *   state = 2 (PAUSED)
+   *   pausedLabel.alpha = 1
+   */
+  _onBeeHitBubble(bee, bubble) {
+    if (this._state !== STATE.PLAYING) return;
+
+    this._state = STATE.PAUSED;
+
+    // Disable bubble body so we don't keep firing
+    bubble.body.enable = false;
+
+    this._pausedLabel.setVisible(true);
+  }
+
   // ─── State Transitions ─────────────────────────────────────────────────────
 
   _startGame() {
-    this._state = STATE.PLAYING;
+    this._state         = STATE.PLAYING;
+    this._tiltStartBeta = null;
+    this._score         = 0;
+    this._worldOffset   = 0;
     this._readyTxt.setVisible(false);
-    this._tiltStartBeta = null; // re-calibrate tilt on game start
-    this._score = 0;
-    this._worldOffset = 0;
+  }
+
+  _resumeGame() {
+    // Mirrors original: tap after bubble pause → state = PLAYING
+    this._state = STATE.PLAYING;
+    this._pausedLabel.setVisible(false);
   }
 
   _triggerGameOver() {
     if (this._state === STATE.GAME_OVER) return;
     this._state = STATE.GAME_OVER;
 
-    // Flash bee red then show overlay
     this.tweens.add({
-      targets: this._bee,
-      alpha: 0,
+      targets:  this._bee,
+      alpha:    0,
       duration: 200,
-      yoyo: true,
-      repeat: 2,
-      onComplete: () => {
-        this._gameOverTxt.setVisible(true);
-      },
+      yoyo:     true,
+      repeat:   2,
+      onComplete: () => { this._gameOverTxt.setVisible(true); },
     });
   }
 
@@ -324,7 +505,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   _restartGame() {
-    // Cleanly restart the scene
     this.cameras.main.fadeOut(300, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this._cleanup();
@@ -350,65 +530,61 @@ export class GameScene extends Phaser.Scene {
   // ─── Main Update Loop ──────────────────────────────────────────────────────
 
   update() {
+    const { height, width } = this.scale;
+
+    // Space bar: start or resume
+    if (Phaser.Input.Keyboard.JustDown(this._spaceKey)) {
+      if (this._state === STATE.READY)  { this._startGame();  return; }
+      if (this._state === STATE.PAUSED) { this._resumeGame(); return; }
+    }
+
     if (this._state !== STATE.PLAYING) return;
 
-    const { height } = this.scale;
-
-    // ── Scroll background (parallax: slightly slower) ──
-    this._bgTile.tilePositionX += SCROLL_SPEED * 0.8;
+    // ── Scroll backgrounds (parallax) ──
+    this._bgTile.tilePositionX    += SCROLL_SPEED * 0.8;
     this._cloudTile.tilePositionX += SCROLL_SPEED * 0.4;
 
-    // ── Scroll world container (walls) ──
-    this._world.x -= SCROLL_SPEED;
-    this._worldOffset = (this._worldOffset || 0) + SCROLL_SPEED;
+    // ── Scroll world container ──
+    this._world.x     -= SCROLL_SPEED;
+    this._worldOffset += SCROLL_SPEED;
 
-    // ── Check finish ──
+    // ── Check finish line ──
     if (this._worldOffset >= this._finishX) {
       this._triggerLevelComplete();
       return;
     }
 
-    // ── Keyboard vertical control ──
-    // Only active when no tilt hardware is available OR device is not tilting
-    const upKey = this._cursors.up;
-    const downKey = this._cursors.down;
-
-    if (Phaser.Input.Keyboard.JustDown(this._spaceKey) && this._state === STATE.READY) {
-      this._startGame();
-      return;
-    }
-
-    if (upKey.isDown) {
+    // ── Keyboard: vertical movement ──
+    if (this._cursors.up.isDown) {
       this._bee.y = Phaser.Math.Clamp(
-        this._bee.y - VERTICAL_MOVE_SPEED,
+        this._bee.y - VERT_SPEED,
         this._bee.displayHeight / 2,
         height - this._bee.displayHeight / 2,
       );
-    } else if (downKey.isDown) {
+    } else if (this._cursors.down.isDown) {
       this._bee.y = Phaser.Math.Clamp(
-        this._bee.y + VERTICAL_MOVE_SPEED,
+        this._bee.y + VERT_SPEED,
         this._bee.displayHeight / 2,
         height - this._bee.displayHeight / 2,
       );
     }
 
-    // Keep bee within vertical bounds at all times
+    // Always clamp
     this._bee.y = Phaser.Math.Clamp(
       this._bee.y,
       this._bee.displayHeight / 2,
       height - this._bee.displayHeight / 2,
     );
 
-    // ── Score: increments with distance ──
-    this._score = Math.floor(this._worldOffset / 10);
-    this._scoreTxt.setText(`Score: ${this._score}`);
+    // ── Bee tilt wobble (slight rotation while flying) ──
+    const tiltAngle = Math.sin(this.time.now / 250) * 4;
+    this._bee.setAngle(tiltAngle);
 
-    // ── Bee gentle bob animation ──
-    const beeHover = Math.sin(this.time.now / 200) * 2;
-    this._bee.setAngle(beeHover * 3); // slight tilt wobble
+    // ── Update score HUD ──
+    this._updateScoreHUD(width);
   }
 
-  // ─── Scene Cleanup (called by Phaser when scene stops) ────────────────────
+  // ─── Scene Lifecycle ───────────────────────────────────────────────────────
 
   shutdown() {
     this._cleanup();

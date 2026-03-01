@@ -1,0 +1,88 @@
+{
+  "length": 2600,
+  "obstacles": [
+    {
+      "comment": "wall_7 — near-start wall, center of screen",
+      "type": "wall",
+      "x": 229,
+      "y": 141,
+      "width": 15,
+      "height": 94
+    },
+    {
+      "comment": "coin1 — between start and wall_8",
+      "type": "coin",
+      "x": 421,
+      "y": 106,
+      "points": 10
+    },
+    {
+      "comment": "wall_8 — mid-low wall",
+      "type": "wall",
+      "x": 607,
+      "y": 204,
+      "width": 16,
+      "height": 100
+    },
+    {
+      "comment": "coin2 — near wall_8 area",
+      "type": "coin",
+      "x": 725,
+      "y": 212,
+      "points": 10
+    },
+    {
+      "comment": "wall_9 — upper wall",
+      "type": "wall",
+      "x": 827,
+      "y": 89,
+      "width": 16,
+      "height": 100
+    },
+    {
+      "comment": "coin3 — before bubble",
+      "type": "coin",
+      "x": 970,
+      "y": 136,
+      "points": 10
+    },
+    {
+      "comment": "bubble — rest point",
+      "type": "bubble",
+      "x": 1142,
+      "y": 137
+    },
+    {
+      "comment": "wall_10 — top narrow gap pair (top)",
+      "type": "wall",
+      "x": 1250,
+      "y": 50,
+      "width": 16,
+      "height": 100
+    },
+    {
+      "comment": "wall_11 — top narrow gap pair (bottom)",
+      "type": "wall",
+      "x": 1251,
+      "y": 229,
+      "width": 16,
+      "height": 100
+    },
+    {
+      "comment": "wall_12 — long horizontal ceiling bar",
+      "type": "wall",
+      "x": 1649,
+      "y": 83,
+      "width": 247,
+      "height": 100
+    },
+    {
+      "comment": "wall_13 — final approach wall",
+      "type": "wall",
+      "x": 2185,
+      "y": 138,
+      "width": 16,
+      "height": 100
+    }
+  ]
+}
