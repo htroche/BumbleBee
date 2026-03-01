@@ -1,7 +1,12 @@
 /**
- * GameScene — Phase 3 (Lives, Level Progression, wallPair obstacles)
+ * GameScene — Phase 4 (Final Polish)
  *
- * Ported from GameMechanics.lua (Corona SDK → Phaser 3).
+ * Phase 4 additions:
+ *   • P1 — Screen shake on wall hit (cameras.main.shake)
+ *   • P2 — Coin particle burst on collect (Phaser ParticleEmitter)
+ *   • P3 — High score persistence via HighScore util + localStorage
+ *   • P4 — Touch zones for mobile (top half = up, bottom half = down)
+ *   • P5 — Sound effects via SoundManager (Web Audio, no files)
  *
  * State machine:
  *   READY          — waiting for tap/space; world is static
@@ -10,20 +15,15 @@
  *   DYING          — bee flashing after wall hit (brief)
  *   LEVEL_COMPLETE — reached the finish line
  *   GAME_OVER      — 0 lives remaining
- *
- * Phase 3 additions:
- *   • Lives system  — 2 bee-icon HUD icons (top-left); wall hit → flash/respawn
- *     → remove one life; 0 lives → GAME_OVER overlay "Level Failed! Tap to retry"
- *   • Level progression — GameState drives currentLevel (1→2→3→Win)
- *   • wallPair obstacle type — generates top-wall + bottom-wall automatically
- *   • Dynamic scroll speed — pulled from levelData.scrollSpeed
- *   • WinScene — launched after completing level 3
  */
 
 import level1Data from '../data/level1.json';
 import level2Data from '../data/level2.json';
 import level3Data from '../data/level3.json';
-import { GameState } from '../GameState.js';
+import { GameState }    from '../GameState.js';
+import { HighScore }    from '../utils/HighScore.js';
+import { SoundManager } from '../utils/SoundManager.js';
+import { unlockLevel }  from '../utils/LevelUnlock.js';
 
 const LEVEL_DATA = [null, level1Data, level2Data, level3Data]; // 1-indexed
 
@@ -44,7 +44,6 @@ const STATE = {
 
 // Dimensions for wallPair obstacles (fit the 320px canvas height)
 const CANVAS_HEIGHT  = 320;
-const WALL_THICKNESS = 48; // px — top & bottom wall blocks
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -55,7 +54,10 @@ export class GameScene extends Phaser.Scene {
     this._digitImages        = [];
     this._coinTweens         = [];
     this._bubbleTweens       = [];
-    this._lifeIcons          = [];   // bee-icon HUD images
+    this._lifeIcons          = [];
+    this._tiltAvailable      = false;  // P4: tracks whether device tilt works
+    this._touchZoneActive    = false;  // P4: touch zones enabled
+    this._touchDirection     = 0;      // P4: -1 up, +1 down, 0 none
   }
 
   // ─── Asset Loading ────────────────────────────────────────────────────────
@@ -93,6 +95,18 @@ export class GameScene extends Phaser.Scene {
     this._coinTweens    = [];
     this._bubbleTweens  = [];
     this._lifeIcons     = [];
+    this._tiltAvailable = false;
+    this._touchZoneActive = false;
+    this._touchDirection  = 0;
+
+    // P2: generate a yellow-circle texture for coin particles (no external asset needed)
+    if (!this.textures.exists('coin_particle')) {
+      const gfx = this.make.graphics({ add: false });
+      gfx.fillStyle(0xFFD700, 1);
+      gfx.fillCircle(8, 8, 8);
+      gfx.generateTexture('coin_particle', 16, 16);
+      gfx.destroy();
+    }
 
     // ── Background (tiled, scrolls left) ──
     this._bgTile = this.add
@@ -257,6 +271,9 @@ export class GameScene extends Phaser.Scene {
 
     this._setupTiltControl();
 
+    // P4: Set up touch zones after tilt setup (so we know if tilt is available)
+    this._setupTouchZones(width, height);
+
     // ── Fade in ──
     this.cameras.main.fadeIn(400, 0, 0, 0);
 
@@ -266,7 +283,6 @@ export class GameScene extends Phaser.Scene {
   // ─── Lives HUD ─────────────────────────────────────────────────────────────
 
   _buildLivesHUD() {
-    // Two small bee icons at top-left (24px each, spaced 28px apart)
     this._lifeIcons = [];
     const startX = 8;
     const y      = 10;
@@ -285,6 +301,68 @@ export class GameScene extends Phaser.Scene {
   _removeOneLifeIcon() {
     const icon = this._lifeIcons.pop();
     if (icon) icon.destroy();
+  }
+
+  // ─── P4: Touch Zones ──────────────────────────────────────────────────────
+
+  /**
+   * Creates two invisible touch zones for mobile players.
+   * Top half = move bee up, bottom half = move bee down.
+   * Active when tilt is not available or not calibrated.
+   */
+  _setupTouchZones(width, height) {
+    // Always set up the zones but only activate if tilt isn't working
+    // We'll give tilt 2 seconds to prove itself; if no real tilt event fires, activate.
+
+    const half = height / 2;
+
+    // Top zone (invisible interactive rectangle)
+    this._touchZoneTop = this.add
+      .rectangle(0, 0, width, half, 0xffffff, 0)
+      .setOrigin(0, 0)
+      .setDepth(5)
+      .setInteractive();
+
+    // Bottom zone
+    this._touchZoneBot = this.add
+      .rectangle(0, half, width, half, 0xffffff, 0)
+      .setOrigin(0, 0)
+      .setDepth(5)
+      .setInteractive();
+
+    this._touchZoneTop.on('pointerdown', () => { this._touchDirection = -1; });
+    this._touchZoneTop.on('pointerup',   () => { this._touchDirection = 0;  });
+    this._touchZoneBot.on('pointerdown', () => { this._touchDirection = 1;  });
+    this._touchZoneBot.on('pointerup',   () => { this._touchDirection = 0;  });
+    this._touchZoneTop.on('pointerout',  () => { this._touchDirection = 0;  });
+    this._touchZoneBot.on('pointerout',  () => { this._touchDirection = 0;  });
+
+    // Hint text that fades after 3 s — only shown on mobile (touch device)
+    if (this.sys.game.device.input.touch) {
+      const hint = this.add
+        .text(width / 2, height / 2, '▲ tap top   ▼ tap bottom', {
+          fontFamily: 'Arial, sans-serif',
+          fontSize:   '13px',
+          color:      '#ffffff',
+          stroke:     '#000',
+          strokeThickness: 2,
+          alpha:       0.85,
+        })
+        .setOrigin(0.5)
+        .setDepth(40);
+
+      this.tweens.add({
+        targets:  hint,
+        alpha:    0,
+        duration: 1500,
+        delay:    2000,
+        ease:     'Power2',
+        onComplete: () => hint.destroy(),
+      });
+    }
+
+    // Activate touch zones — they always work as a fallback
+    this._touchZoneActive = true;
   }
 
   // ─── Level Builder ─────────────────────────────────────────────────────────
@@ -309,17 +387,12 @@ export class GameScene extends Phaser.Scene {
     this._world.add(w);
   }
 
-  /**
-   * wallPair — creates top wall (ceiling → gapY) and bottom wall (gapY+gapHeight → canvas bottom).
-   * gapY is the top of the opening.
-   */
   _spawnWallPair(obs) {
     const wallWidth = obs.width || 20;
-    const gapTop    = obs.gapY;                      // top of opening
-    const gapBot    = obs.gapY + obs.gapHeight;      // bottom of opening
+    const gapTop    = obs.gapY;
+    const gapBot    = obs.gapY + obs.gapHeight;
     const canvasH   = CANVAS_HEIGHT;
 
-    // Top wall — from y=0 to y=gapTop
     const topH = gapTop;
     if (topH > 0) {
       const topW = this.add.image(obs.x, topH / 2, 'wall');
@@ -330,7 +403,6 @@ export class GameScene extends Phaser.Scene {
       this._world.add(topW);
     }
 
-    // Bottom wall — from y=gapBot to y=canvasH
     const botH = canvasH - gapBot;
     if (botH > 0) {
       const botY = gapBot + botH / 2;
@@ -469,19 +541,56 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // ─── P2: Coin Particle Burst ───────────────────────────────────────────────
+
+  _spawnCoinParticles(worldX, worldY) {
+    // worldX is in world-container space; convert to screen space
+    const screenX = worldX + this._world.x;
+    const screenY = worldY;
+
+    try {
+      const emitter = this.add.particles(screenX, screenY, 'coin_particle', {
+        speed:    { min: 40, max: 120 },
+        angle:    { min: 0,  max: 360 },
+        scale:    { start: 0.7, end: 0 },
+        lifespan: 400,
+        quantity: 8,
+        emitting: false,
+        depth:    60,
+        gravityY: 80,
+      });
+      emitter.explode(8);
+
+      // Auto-destroy after particles finish
+      this.time.delayedCall(600, () => {
+        if (emitter && emitter.scene) emitter.destroy();
+      });
+    } catch (e) {
+      // Fallback: Phaser version may differ; silently ignore particle errors
+      console.warn('Particle burst unavailable:', e.message);
+    }
+  }
+
   // ─── Tilt / Orientation Control ────────────────────────────────────────────
 
   _setupTiltControl() {
     if (typeof window !== 'undefined' && 'DeviceOrientationEvent' in window) {
       this._orientationHandler = (event) => {
-        if (this._state !== STATE.PLAYING) return;
         const beta = event.beta;
         if (beta === null) return;
+
+        // Mark tilt as available on first real reading
+        if (!this._tiltAvailable) {
+          this._tiltAvailable = true;
+        }
+
+        if (this._state !== STATE.PLAYING) return;
         if (this._tiltStartBeta === null) this._tiltStartBeta = beta;
+
         const { height } = this.scale;
-        let delta = Phaser.Math.Clamp(beta - this._tiltStartBeta, -10, 10);
-        const targetY = height / 2 - 16 * delta;
-        this._bee.y = Phaser.Math.Clamp(targetY, 0, height);
+        const delta    = Phaser.Math.Clamp(beta - this._tiltStartBeta, -10, 10);
+        const targetY  = height / 2 - 16 * delta;
+        this._bee.y    = Phaser.Math.Clamp(targetY, 0, height);
       };
       window.addEventListener('deviceorientation', this._orientationHandler);
 
@@ -521,12 +630,15 @@ export class GameScene extends Phaser.Scene {
       case STATE.LEVEL_COMPLETE:
         this._advanceLevel();
         break;
-      // DYING — ignore taps while bee is flashing
     }
   }
 
   _onBeeHitWall(bee, wall) {
     if (this._state !== STATE.PLAYING) return;
+    // P1: Screen shake
+    this.cameras.main.shake(250, 0.015);
+    // P5: Hit sound
+    SoundManager.hit();
     this._triggerDeath();
   }
 
@@ -543,6 +655,12 @@ export class GameScene extends Phaser.Scene {
       return true;
     });
 
+    // P2: Particle burst
+    this._spawnCoinParticles(coin.x, coin.y);
+
+    // P5: Coin sound
+    SoundManager.coin();
+
     this._spawnFloatingText(coin.x, coin.y, `+${pts}`);
     this._coins.remove(coin, true, true);
     this._score += pts;
@@ -550,7 +668,6 @@ export class GameScene extends Phaser.Scene {
 
   _onBeeHitBubble(bee, bubble) {
     if (this._state !== STATE.PLAYING) return;
-
     this._state = STATE.PAUSED;
     bubble.body.enable = false;
     this._pausedLabel.setVisible(true);
@@ -571,19 +688,10 @@ export class GameScene extends Phaser.Scene {
     this._pausedLabel.setVisible(false);
   }
 
-  /**
-   * Bee hit a wall:
-   *   1. Enter DYING state (prevents re-triggers & input)
-   *   2. Flash the bee 3x, then fade out
-   *   3. Decrement GameState.lives — remove one life icon from HUD
-   *   4a. lives > 0 → respawn bee at start; resume PLAYING
-   *   4b. lives = 0 → show "Level Failed" overlay → GAME_OVER
-   */
   _triggerDeath() {
     if (this._state === STATE.DYING || this._state === STATE.GAME_OVER) return;
     this._state = STATE.DYING;
 
-    // Disable bee physics while dying
     this._bee.body.enable = false;
     if (this._wingTween) this._wingTween.pause();
 
@@ -592,15 +700,13 @@ export class GameScene extends Phaser.Scene {
       alpha:    0,
       duration: 150,
       yoyo:     true,
-      repeat:   4,   // 5 flashes total
+      repeat:   4,
       ease:     'Linear',
       onComplete: () => {
-        // Decrement lives
         GameState.lives = Math.max(0, GameState.lives - 1);
         this._removeOneLifeIcon();
 
         if (GameState.lives > 0) {
-          // Respawn bee
           const { height } = this.scale;
           this._bee.setPosition(BEE_X, height / 2);
           this._bee.setAlpha(1);
@@ -608,7 +714,11 @@ export class GameScene extends Phaser.Scene {
           if (this._wingTween) this._wingTween.resume();
           this._state = STATE.PLAYING;
         } else {
-          // No lives left → Game Over
+          // P5: Game over sound
+          SoundManager.gameOver();
+          // P3: Save high score
+          HighScore.set(GameState.totalScore + this._score);
+
           this._bee.setAlpha(0.3);
           this._state = STATE.GAME_OVER;
           this._gameOverGroup.setVisible(true);
@@ -619,12 +729,13 @@ export class GameScene extends Phaser.Scene {
 
   _triggerLevelComplete() {
     this._state = STATE.LEVEL_COMPLETE;
+    // P5: Level complete sound
+    SoundManager.levelComplete();
+    // P3: Update high score with running total
+    HighScore.set(GameState.totalScore + this._score);
     this._levelCompleteGroup.setVisible(true);
   }
 
-  /**
-   * Retry current level — resets lives to 2, restarts scene.
-   */
   _retryLevel() {
     GameState.retryLevel();
     this.cameras.main.fadeOut(300, 0, 0, 0);
@@ -634,21 +745,20 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * Level complete — advance or win.
-   */
   _advanceLevel() {
     GameState.advanceLevel(this._score);
+    // P6: Unlock the next level so the menu shows a jump button
+    unlockLevel(GameState.currentLevel);
 
     this.cameras.main.fadeOut(300, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this._cleanup();
 
       if (GameState.currentLevel > MAX_LEVELS) {
-        // All levels done → Win screen
+        // P3: Final high score save
+        HighScore.set(GameState.totalScore);
         this.scene.start('WinScene', { totalScore: GameState.totalScore });
       } else {
-        // Next level
         this.scene.restart();
       }
     });
@@ -668,6 +778,7 @@ export class GameScene extends Phaser.Scene {
       window.removeEventListener('deviceorientation', this._orientationHandler);
       this._orientationHandler = null;
     }
+    this._touchDirection = 0;
   }
 
   // ─── Main Update Loop ──────────────────────────────────────────────────────
@@ -691,7 +802,7 @@ export class GameScene extends Phaser.Scene {
     this._world.x     -= this._scrollSpeed;
     this._worldOffset += this._scrollSpeed;
 
-    // ── Check finish line (5000px or level length) ──
+    // ── Check finish line ──
     if (this._worldOffset >= this._finishX) {
       this._triggerLevelComplete();
       return;
@@ -707,6 +818,15 @@ export class GameScene extends Phaser.Scene {
     } else if (this._cursors.down.isDown) {
       this._bee.y = Phaser.Math.Clamp(
         this._bee.y + VERT_SPEED,
+        this._bee.displayHeight / 2,
+        height - this._bee.displayHeight / 2,
+      );
+    }
+
+    // P4: Touch zone movement (fallback when tilt isn't driving the bee)
+    if (this._touchZoneActive && this._touchDirection !== 0 && !this._tiltAvailable) {
+      this._bee.y = Phaser.Math.Clamp(
+        this._bee.y + this._touchDirection * VERT_SPEED,
         this._bee.displayHeight / 2,
         height - this._bee.displayHeight / 2,
       );
