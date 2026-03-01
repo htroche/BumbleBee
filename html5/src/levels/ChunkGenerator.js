@@ -2,6 +2,10 @@
  * ChunkGenerator — builds levels from reusable obstacle chunks.
  * Each chunk is ~400–600px wide and describes a distinct gameplay pattern.
  * Levels are composed by sequencing chunks with rules to avoid repetition.
+ *
+ * Difficulty scaling:
+ *   - gapSize interpolates from cfg.startGap → cfg.endGap across the level
+ *   - This creates a smooth ramp: early chunks are more forgiving, climax is tightest
  */
 
 const CANVAS_H = 320;
@@ -23,8 +27,8 @@ const CHUNKS = {
 
   corridor: (cfg) => {
     // Narrow horizontal tunnel
-    const gap  = cfg.gapSize;      // e.g. 110
-    const gapY = cfg.gapY ?? 105;  // center of gap
+    const gap  = cfg.gapSize;
+    const gapY = cfg.gapY ?? 105;
     const obs  = [];
     for (let wx = 0; wx < 400; wx += 80) {
       obs.push({ type: 'wallPair', x: wx, gapY: gapY - gap / 2, gapHeight: gap, width: 18 });
@@ -67,7 +71,7 @@ const CHUNKS = {
   },
 
   bubble_field: (_cfg) => {
-    // 2–3 bubbles — intentional rest spots
+    // 2 bubbles — intentional rest spots
     return {
       obstacles: [
         { type: 'bubble', x: 120, y: 100 },
@@ -84,17 +88,21 @@ const CHUNKS = {
 
   wave: (cfg) => {
     // Wall pairs whose gaps rise and fall like a wave
-    const gap = cfg.gapSize;
-    const obs = [];
+    const gap  = cfg.gapSize;
+    const half = gap / 2;
+    const obs  = [];
     for (let i = 0; i < 6; i++) {
-      const gapY = 100 + Math.sin(i * 0.9) * 70;
-      obs.push({ type: 'wallPair', x: i * 90, gapY: gapY - gap / 2, gapHeight: gap, width: 18 });
+      // Raw center of the gap follows a sine wave
+      const rawCenter = 100 + Math.sin(i * 0.9) * 70;
+      // Clamp center so the gap never clips outside the canvas
+      const center = Math.max(half, Math.min(CANVAS_H - half, rawCenter));
+      obs.push({ type: 'wallPair', x: i * 90, gapY: center - half, gapHeight: gap, width: 18 });
     }
     return { obstacles: obs, width: 580 };
   },
 
   squeeze: (cfg) => {
-    // Gap starts wide and narrows to minimum
+    // Gap starts wide and narrows to minimum — tests precise control
     const minGap = cfg.gapSize;
     const obs    = [];
     for (let i = 0; i < 5; i++) {
@@ -111,7 +119,7 @@ const CHUNKS = {
       obstacles: [
         { type: 'wallPair', x: 60,  gapY: 120 - gap / 2, gapHeight: gap, width: 18 },
         { type: 'wallPair', x: 140, gapY: 150 - gap / 2, gapHeight: gap, width: 18 },
-        { type: 'coin',     x: 280, y: 160, points: 20 }, // reward
+        { type: 'coin',     x: 280, y: 160, points: 20 }, // reward for making it through
         { type: 'coin',     x: 340, y: 120, points: 20 },
         { type: 'coin',     x: 400, y: 200, points: 20 },
       ],
@@ -121,72 +129,96 @@ const CHUNKS = {
 };
 
 // ─── LEVEL RECIPES ────────────────────────────────────────────────────────
-// Each level is a sequence of chunk names. Rules:
-//   - Never two 'gauntlet' or 'squeeze' back to back
-//   - Always follow hard chunks with 'breathing_room' or 'open'
-//   - Scatter 'bubble_field' every 5–7 chunks
-//   - More hard chunks later in the level
+// Rules enforced in these recipes:
+//   1. 'gauntlet' and 'squeeze' are HARD chunks — never appear back-to-back
+//   2. Every HARD chunk is immediately followed by 'breathing_room' or 'open' or 'bubble_field'
+//   3. 'bubble_field' appears every 6–7 chunks (indices ~7, 14, 21, 27)
+//   4. Difficulty ramps progressively — hard clusters appear later in the level
+//
+// gapSize ramps from cfg.startGap (early) → cfg.endGap (late) per chunk index.
 
 const LEVEL_RECIPES = {
+  // Level 1: introduce all mechanics gently; first hard chunks at chunk 15+
   1: [
-    'open',         'coin_run',
-    'corridor',     'breathing_room',
-    'zigzag',       'open',
-    'wave',         'breathing_room',
-    'fakeout',      'coin_run',
-    'bubble_field',
-    'corridor',     'breathing_room',
-    'zigzag',       'coin_run',
-    'gauntlet',     'breathing_room',
-    'wave',         'open',
-    'squeeze',      'breathing_room',
-    'fakeout',      'coin_run',
-    'gauntlet',     'breathing_room',
-    'zigzag',       'wave',
-    'open',         'coin_run',
-    'gauntlet',                       // climax
+    'open',           'coin_run',          // 0,1   — easy warmup
+    'corridor',       'breathing_room',    // 2,3   — first walls, safe gap
+    'zigzag',         'open',              // 4,5   — medium
+    'wave',                                // 6     — medium
+    'bubble_field',                        // 7     — rest #1
+    'coin_run',       'fakeout',           // 8,9   — medium
+    'corridor',       'breathing_room',    // 10,11 — medium + rest
+    'zigzag',         'coin_run',          // 12,13 — medium
+    'bubble_field',                        // 14    — rest #2
+    'gauntlet',       'breathing_room',    // 15,16 — HARD + rest
+    'wave',           'open',              // 17,18 — medium + easy
+    'fakeout',        'coin_run',          // 19,20 — medium + easy
+    'bubble_field',                        // 21    — rest #3
+    'squeeze',        'breathing_room',    // 22,23 — HARD + rest
+    'gauntlet',       'breathing_room',    // 24,25 — HARD + rest
+    'coin_run',                            // 26    — breather reward
+    'bubble_field',                        // 27    — rest #4
+    'wave',           'zigzag',            // 28,29 — build to climax
+    'gauntlet',                            // 30    — CLIMAX
   ],
+
+  // Level 2: skip the long warmup; first hard chunk arrives at chunk 8
   2: [
-    'coin_run',     'corridor',
-    'zigzag',       'open',
-    'gauntlet',     'breathing_room',
-    'wave',         'fakeout',
-    'squeeze',      'breathing_room',
-    'bubble_field',
-    'gauntlet',     'wave',
-    'zigzag',       'coin_run',
-    'squeeze',      'breathing_room',
-    'gauntlet',     'fakeout',
-    'wave',         'corridor',
-    'gauntlet',     'breathing_room',
-    'squeeze',      'zigzag',
-    'gauntlet',     'coin_run',
-    'wave',         'gauntlet',
+    'corridor',       'zigzag',            // 0,1   — medium right away
+    'breathing_room', 'coin_run',          // 2,3   — brief rest
+    'wave',           'fakeout',           // 4,5   — medium
+    'open',                                // 6     — easy breather
+    'bubble_field',                        // 7     — rest #1
+    'gauntlet',       'breathing_room',    // 8,9   — HARD + rest
+    'zigzag',         'corridor',          // 10,11 — medium
+    'wave',           'coin_run',          // 12,13 — medium + reward
+    'bubble_field',                        // 14    — rest #2
+    'squeeze',        'breathing_room',    // 15,16 — HARD + rest
+    'gauntlet',       'breathing_room',    // 17,18 — HARD + rest
+    'fakeout',        'wave',              // 19,20 — medium
+    'bubble_field',                        // 21    — rest #3
+    'gauntlet',       'breathing_room',    // 22,23 — HARD + rest
+    'zigzag',         'squeeze',           // 24,25 — medium → HARD
+    'breathing_room',                      // 26    — rest after squeeze
+    'bubble_field',                        // 27    — rest #4
+    'wave',                                // 28    — build to climax
+    'gauntlet',                            // 29    — CLIMAX
   ],
+
+  // Level 3: hard from chunk 1; 7 gauntlets + 3 squeezes across the level
   3: [
-    'corridor',     'gauntlet',
-    'squeeze',      'coin_run',
-    'wave',         'gauntlet',
-    'fakeout',      'breathing_room',
-    'bubble_field',
-    'gauntlet',     'squeeze',
-    'zigzag',       'gauntlet',
-    'wave',         'coin_run',
-    'gauntlet',     'fakeout',
-    'squeeze',      'gauntlet',
-    'wave',         'zigzag',
-    'gauntlet',     'breathing_room',
-    'squeeze',      'gauntlet',
-    'coin_run',     'wave',
-    'gauntlet',     'squeeze',
-    'gauntlet',                       // climax
+    'corridor',       'gauntlet',          // 0,1   — HARD immediately
+    'breathing_room', 'wave',              // 2,3   — rest then medium
+    'squeeze',        'breathing_room',    // 4,5   — HARD + rest
+    'zigzag',                              // 6     — medium
+    'bubble_field',                        // 7     — rest #1
+    'gauntlet',       'breathing_room',    // 8,9   — HARD + rest
+    'fakeout',        'wave',              // 10,11 — medium
+    'squeeze',        'breathing_room',    // 12,13 — HARD + rest
+    'bubble_field',                        // 14    — rest #2
+    'gauntlet',       'breathing_room',    // 15,16 — HARD + rest
+    'zigzag',         'gauntlet',          // 17,18 — medium → HARD
+    'breathing_room', 'wave',              // 19,20 — rest + medium
+    'bubble_field',                        // 21    — rest #3
+    'squeeze',        'breathing_room',    // 22,23 — HARD + rest
+    'gauntlet',       'breathing_room',    // 24,25 — HARD + rest
+    'fakeout',                             // 26    — medium (reward coins)
+    'bubble_field',                        // 27    — rest #4 (last breather)
+    'coin_run',                            // 28    — calm before the storm
+    'gauntlet',                            // 29    — CLIMAX
   ],
 };
 
+// ─── DIFFICULTY CONFIG ────────────────────────────────────────────────────
+// gapSize ramps linearly from startGap (first chunk) to endGap (last chunk).
+// scrollSpeed is constant per level (changing mid-level would feel jarring).
+//
+// Gap sizing rationale (bee hitbox ~35px):
+//   startGap 120 → very comfortable; endGap 60 → tight but learnable
+
 const LEVEL_CFG = {
-  1: { gapSize: 100, scrollSpeed: 2 },
-  2: { gapSize: 88,  scrollSpeed: 3 },
-  3: { gapSize: 74,  scrollSpeed: 4 },
+  1: { startGap: 120, endGap: 90,  scrollSpeed: 2 },
+  2: { startGap: 100, endGap: 76,  scrollSpeed: 3 },
+  3: { startGap: 84,  endGap: 60,  scrollSpeed: 4 },
 };
 
 // ─── GENERATOR ────────────────────────────────────────────────────────────
@@ -198,11 +230,16 @@ export function generateLevel(levelNum) {
   const obstacles = [];
   let cursorX = 600; // start after bee's initial position + some breathing room
 
-  for (const chunkName of recipe) {
-    const chunkFn = CHUNKS[chunkName];
+  for (let i = 0; i < recipe.length; i++) {
+    const chunkName = recipe[i];
+    const chunkFn   = CHUNKS[chunkName];
     if (!chunkFn) continue;
 
-    const chunk = chunkFn(cfg);
+    // Interpolate gapSize: 0% progress = startGap, 100% progress = endGap
+    const progress = recipe.length > 1 ? i / (recipe.length - 1) : 0;
+    const gapSize  = Math.round(cfg.startGap + (cfg.endGap - cfg.startGap) * progress);
+
+    const chunk = chunkFn({ ...cfg, gapSize });
 
     // Offset each obstacle by cursorX
     for (const obs of chunk.obstacles) {
