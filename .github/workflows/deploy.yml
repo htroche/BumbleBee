@@ -3,9 +3,6 @@ name: Deploy HTML5 Game to GitHub Pages
 on:
   push:
     branches:
-      - html5-phase-1
-      - html5-phase-2
-      - main
       - master
   workflow_dispatch:
 

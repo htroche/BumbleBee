@@ -4,6 +4,8 @@
  * Shows the splash background, the BumbleBee logo text, and a Play button.
  * Tapping/clicking Play transitions to GameScene.
  */
+import { GameState } from '../GameState.js';
+
 export class MenuScene extends Phaser.Scene {
   constructor() {
     super({ key: 'MenuScene' });
@@ -80,6 +82,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     playBtn.on('pointerdown', () => {
+      GameState.reset(); // always start fresh from level 1
       this.cameras.main.fadeOut(300, 0, 0, 0);
     });
 

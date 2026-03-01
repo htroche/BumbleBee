@@ -1,0 +1,235 @@
+{
+  "level": 3,
+  "length": 5000,
+  "scrollSpeed": 4,
+  "obstacles": [
+    {
+      "comment": "First pair — center, short warm-up",
+      "type": "wallPair",
+      "x": 310,
+      "gapY": 160,
+      "gapHeight": 75,
+      "width": 22
+    },
+    {
+      "comment": "Coin — center",
+      "type": "coin", "x": 430, "y": 160, "points": 10
+    },
+    {
+      "comment": "Wall pair — high gap",
+      "type": "wallPair",
+      "x": 560,
+      "gapY": 90,
+      "gapHeight": 75,
+      "width": 22
+    },
+    {
+      "comment": "Coin — high route",
+      "type": "coin", "x": 640, "y": 88, "points": 10
+    },
+    {
+      "comment": "Wall pair — very low gap",
+      "type": "wallPair",
+      "x": 810,
+      "gapY": 245,
+      "gapHeight": 74,
+      "width": 22
+    },
+    {
+      "comment": "Coin — low route",
+      "type": "coin", "x": 900, "y": 243, "points": 10
+    },
+    {
+      "comment": "Bubble — early rest",
+      "type": "bubble", "x": 1000, "y": 160
+    },
+    {
+      "comment": "Coin — after bubble",
+      "type": "coin", "x": 1100, "y": 160, "points": 10
+    },
+    {
+      "comment": "Wall pair — high",
+      "type": "wallPair",
+      "x": 1220,
+      "gapY": 85,
+      "gapHeight": 74,
+      "width": 22
+    },
+    {
+      "comment": "Wall pair — lower (tight sequence)",
+      "type": "wallPair",
+      "x": 1470,
+      "gapY": 240,
+      "gapHeight": 74,
+      "width": 22
+    },
+    {
+      "comment": "Coin triple — mid",
+      "type": "coin", "x": 1600, "y": 120, "points": 10
+    },
+    {
+      "comment": "Coin triple — mid 2",
+      "type": "coin", "x": 1640, "y": 160, "points": 10
+    },
+    {
+      "comment": "Coin triple — mid 3",
+      "type": "coin", "x": 1680, "y": 200, "points": 10
+    },
+    {
+      "comment": "Wall pair — center (after coin triple)",
+      "type": "wallPair",
+      "x": 1720,
+      "gapY": 160,
+      "gapHeight": 73,
+      "width": 22
+    },
+    {
+      "comment": "Wall pair — near top",
+      "type": "wallPair",
+      "x": 1970,
+      "gapY": 82,
+      "gapHeight": 73,
+      "width": 22
+    },
+    {
+      "comment": "Coin — top zone",
+      "type": "coin", "x": 2080, "y": 80, "points": 10
+    },
+    {
+      "comment": "Bubble — mid-level breather",
+      "type": "bubble", "x": 2180, "y": 165
+    },
+    {
+      "comment": "Wall pair — bottom after bubble",
+      "type": "wallPair",
+      "x": 2320,
+      "gapY": 238,
+      "gapHeight": 73,
+      "width": 22
+    },
+    {
+      "comment": "Coin — bottom zone",
+      "type": "coin", "x": 2430, "y": 236, "points": 10
+    },
+    {
+      "comment": "Wall pair — center",
+      "type": "wallPair",
+      "x": 2570,
+      "gapY": 157,
+      "gapHeight": 72,
+      "width": 22
+    },
+    {
+      "comment": "Coin — center zone",
+      "type": "coin", "x": 2660, "y": 155, "points": 10
+    },
+    {
+      "comment": "Wall pair — high",
+      "type": "wallPair",
+      "x": 2820,
+      "gapY": 88,
+      "gapHeight": 72,
+      "width": 22
+    },
+    {
+      "comment": "Wall pair — very low (quick switch)",
+      "type": "wallPair",
+      "x": 3070,
+      "gapY": 242,
+      "gapHeight": 72,
+      "width": 22
+    },
+    {
+      "comment": "Coin run — 5 coins",
+      "type": "coin", "x": 3190, "y": 120, "points": 10
+    },
+    {
+      "comment": "Coin run 2",
+      "type": "coin", "x": 3230, "y": 100, "points": 10
+    },
+    {
+      "comment": "Coin run 3",
+      "type": "coin", "x": 3270, "y": 80, "points": 10
+    },
+    {
+      "comment": "Coin run 4",
+      "type": "coin", "x": 3310, "y": 100, "points": 10
+    },
+    {
+      "comment": "Coin run 5",
+      "type": "coin", "x": 3350, "y": 120, "points": 10
+    },
+    {
+      "comment": "Wall pair — mid",
+      "type": "wallPair",
+      "x": 3380,
+      "gapY": 152,
+      "gapHeight": 72,
+      "width": 22
+    },
+    {
+      "comment": "Bubble — last rest",
+      "type": "bubble", "x": 3510, "y": 160
+    },
+    {
+      "comment": "Wall pair — high (sprint begins)",
+      "type": "wallPair",
+      "x": 3650,
+      "gapY": 80,
+      "gapHeight": 71,
+      "width": 22
+    },
+    {
+      "comment": "Wall pair — low (alternate fast)",
+      "type": "wallPair",
+      "x": 3890,
+      "gapY": 240,
+      "gapHeight": 71,
+      "width": 22
+    },
+    {
+      "comment": "Wall pair — center",
+      "type": "wallPair",
+      "x": 4130,
+      "gapY": 160,
+      "gapHeight": 71,
+      "width": 22
+    },
+    {
+      "comment": "Bonus coin cluster pre-finish",
+      "type": "coin", "x": 4250, "y": 100, "points": 20
+    },
+    {
+      "comment": "Bonus coin cluster 2",
+      "type": "coin", "x": 4290, "y": 140, "points": 20
+    },
+    {
+      "comment": "Bonus coin cluster 3",
+      "type": "coin", "x": 4330, "y": 180, "points": 20
+    },
+    {
+      "comment": "Bonus coin cluster 4",
+      "type": "coin", "x": 4370, "y": 220, "points": 20
+    },
+    {
+      "comment": "Final wall pair — high",
+      "type": "wallPair",
+      "x": 4440,
+      "gapY": 88,
+      "gapHeight": 71,
+      "width": 22
+    },
+    {
+      "comment": "Final wall pair — low",
+      "type": "wallPair",
+      "x": 4680,
+      "gapY": 235,
+      "gapHeight": 71,
+      "width": 22
+    },
+    {
+      "comment": "Last coin — home stretch",
+      "type": "coin", "x": 4850, "y": 160, "points": 30
+    }
+  ]
+}
