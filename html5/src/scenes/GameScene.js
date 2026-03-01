@@ -2,15 +2,11 @@
  * GameScene — Collision Fix + Cartoon Background
  */
 
-import level1Data from '../data/level1.json';
-import level2Data from '../data/level2.json';
-import level3Data from '../data/level3.json';
+import { generateLevel } from '../levels/ChunkGenerator.js';
 import { GameState }    from '../GameState.js';
 import { HighScore }    from '../utils/HighScore.js';
 import { SoundManager } from '../utils/SoundManager.js';
 import { unlockLevel }  from '../utils/LevelUnlock.js';
-
-const LEVEL_DATA  = [null, level1Data, level2Data, level3Data];
 const BEE_X       = 120;
 const VERT_SPEED  = 4;
 const MAX_LEVELS  = 3;
@@ -43,7 +39,7 @@ export class GameScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
 
-    this._levelData   = LEVEL_DATA[GameState.currentLevel] ?? level1Data;
+    this._levelData   = generateLevel(GameState.currentLevel);
     this._scrollSpeed = this._levelData.scrollSpeed ?? 2;
     this._state       = STATE.READY;
     this._score       = 0;
@@ -57,6 +53,8 @@ export class GameScene extends Phaser.Scene {
     this._tiltAvailable      = false;
     this._touchDirection     = 0;
     this._invincible         = false;
+    this._activeBubble       = null;
+    this._bubbleFloatTween   = null;
 
     // Generate coin particle texture
     if (!this.textures.exists('coin_particle')) {
@@ -357,8 +355,54 @@ export class GameScene extends Phaser.Scene {
   _onHitBubble(bee, bubble) {
     if (this._state !== STATE.PLAYING) return;
     this._state = STATE.PAUSED;
+
+    // Disable further collision on this bubble
     bubble.body.enable = false;
-    this._pausedLabel.setVisible(true);
+    this._activeBubble = bubble;
+
+    // Stop wing tween
+    if (this._wingTween) this._wingTween.pause();
+
+    // 1. Bee slides into bubble center + shrinks to fit inside
+    this.tweens.add({
+      targets: this._bee,
+      x: bubble.x,
+      y: bubble.y,
+      scaleX: 0.55,
+      scaleY: 0.55,
+      duration: 400,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        // 2. Blue tint — looks like bee is inside translucent bubble
+        this._bee.setTint(0xAADDFF);
+
+        // 3. Bubble slightly expands to show it received the bee
+        this.tweens.add({
+          targets: bubble,
+          scaleX: 1.25, scaleY: 1.25,
+          duration: 200, yoyo: true, ease: 'Sine.easeOut',
+        });
+
+        // 4. Bee + bubble bob together
+        this._bubbleFloatTween = this.tweens.add({
+          targets: [this._bee, bubble],
+          y: bubble.y - 10,
+          duration: 1200,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+
+        // 5. Slow wing flap while inside
+        if (this._wingTween) {
+          this._wingTween.timeScale = 0.3;
+          this._wingTween.resume();
+        }
+
+        // Show label
+        this._pausedLabel.setVisible(true);
+      },
+    });
   }
 
   // ─── DEATH ANIMATION (CUTE) ───────────────────────────────────────────────
@@ -551,8 +595,66 @@ export class GameScene extends Phaser.Scene {
   }
 
   _resumeGame() {
-    this._state = STATE.PLAYING;
+    const bubble = this._activeBubble;
+    this._activeBubble = null;
+
+    // Stop shared float tween
+    if (this._bubbleFloatTween) {
+      this._bubbleFloatTween.stop();
+      this._bubbleFloatTween = null;
+    }
+
     this._pausedLabel.setVisible(false);
+
+    // 1. Bubble pop — scale up and fade out
+    if (bubble) {
+      // Particle burst at bubble position
+      try {
+        const e = this.add.particles(bubble.x, bubble.y, 'coin_particle', {
+          speed: { min: 60, max: 160 },
+          angle: { min: 0, max: 360 },
+          scale: { start: 0.5, end: 0 },
+          tint: 0xAAEEFF,
+          lifespan: 500,
+          quantity: 12,
+          emitting: false,
+          depth: 60,
+        });
+        e.explode(12);
+        this.time.delayedCall(700, () => { if (e?.scene) e.destroy(); });
+      } catch (_) {}
+
+      this.tweens.add({
+        targets: bubble,
+        scaleX: 2.5, scaleY: 2.5,
+        alpha: 0,
+        duration: 250,
+        ease: 'Power2',
+        onComplete: () => {
+          const idx = this._bubbles.findIndex(b => b.body === bubble);
+          if (idx !== -1) this._bubbles.splice(idx, 1);
+          this._bubbleGroup.remove(bubble, true, true);
+        },
+      });
+    }
+
+    // 2. Bee bounces back to lane + clears tint + restores size
+    const { height } = this.scale;
+    this._bee.clearTint();
+    if (this._wingTween) this._wingTween.timeScale = 1;
+
+    this.tweens.add({
+      targets: this._bee,
+      x: BEE_X,
+      y: Phaser.Math.Clamp(this._bee.y, 60, height - 60),
+      scaleX: 1,
+      scaleY: 1,
+      duration: 350,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this._state = STATE.PLAYING;
+      },
+    });
   }
 
   _retryLevel() {
